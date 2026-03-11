@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const inter = Inter({
@@ -22,6 +23,11 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} antialiased`}>
         {children}
+        <Script 
+          defer 
+          src="https://umami.arianizadi.com/script.js" 
+          data-website-id="8a24ccc0-f6fd-45b1-ae53-e5584882e0cb"
+        />
       </body>
     </html>
   );
