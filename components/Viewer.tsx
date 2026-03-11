@@ -404,6 +404,24 @@ export default function Viewer({ scenes, config }: ViewerProps) {
         </div>
       </div>
 
+      {/* Tooltips */}
+      <HoverTooltip
+        classIndex={hoverClassIndex}
+        labels={config.labels}
+        x={hoverX}
+        y={hoverY}
+        visible={hoverVisible}
+      />
+      <DiffTooltip
+        info={diffHoverInfo}
+        labels={config.labels}
+        leftName={allModels[leftIndex]?.name ?? "Left"}
+        rightName={allModels[rightIndex]?.name ?? "Right"}
+        x={diffHoverX}
+        y={diffHoverY}
+        visible={diffHoverVisible}
+      />
+
       {/* Help Modal */}
       {showHelp && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
