@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Activity, LayoutTemplate, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Activity, LayoutTemplate, ChevronLeft, ChevronRight, Loader2, HelpCircle, X, ExternalLink } from "lucide-react";
 import MaskCanvas from "./MaskCanvas";
 import DiffCanvas from "./DiffCanvas";
 import ClassLegend from "./ClassLegend";
@@ -41,6 +41,8 @@ export default function Viewer({ scenes, config }: ViewerProps) {
   const [sceneStats, setSceneStats] = useState<Map<string, ModelStats[]>>(new Map());
   const [statsLoading, setStatsLoading] = useState(false);
   const fetchedRef = useRef<Set<string>>(new Set());
+
+  const [showHelp, setShowHelp] = useState(false);
 
   // Hover state
   const [hoverClassIndex, setHoverClassIndex] = useState<number | null>(null);
@@ -193,21 +195,32 @@ export default function Viewer({ scenes, config }: ViewerProps) {
           </p>
         </div>
 
-        {/* Opacity Control */}
-        <div className="flex items-center gap-3 bg-black/40 px-4 py-2 rounded-xl border border-white/10">
-          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Overlay</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={opacity}
-            onChange={(e) => setOpacity(Number(e.target.value))}
-            className="w-28 accent-blue-500 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-          />
-          <span className="text-sm font-bold text-white tabular-nums w-10 text-right">
-            {Math.round(opacity * 100)}%
-          </span>
+        {/* Controls */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setShowHelp(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-all font-medium"
+          >
+            <HelpCircle size={18} />
+            <span className="hidden sm:inline">Setup Guide</span>
+          </button>
+
+          {/* Opacity Control */}
+          <div className="flex items-center gap-3 bg-black/40 px-4 py-2 rounded-xl border border-white/10">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Overlay</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={opacity}
+              onChange={(e) => setOpacity(Number(e.target.value))}
+              className="w-28 accent-blue-500 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+            />
+            <span className="text-sm font-bold text-white tabular-nums w-10 text-right">
+              {Math.round(opacity * 100)}%
+            </span>
+          </div>
         </div>
       </header>
 
@@ -391,23 +404,74 @@ export default function Viewer({ scenes, config }: ViewerProps) {
         </div>
       </div>
 
-      {/* Tooltips */}
-      <HoverTooltip
-        classIndex={hoverClassIndex}
-        labels={config.labels}
-        x={hoverX}
-        y={hoverY}
-        visible={hoverVisible}
-      />
-      <DiffTooltip
-        info={diffHoverInfo}
-        labels={config.labels}
-        leftName={allModels[leftIndex]?.name ?? "Left"}
-        rightName={allModels[rightIndex]?.name ?? "Right"}
-        x={diffHoverX}
-        y={diffHoverY}
-        visible={diffHoverVisible}
-      />
+      {/* Help Modal */}
+      {showHelp && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setShowHelp(false)}
+          />
+          <div className="relative glass-panel p-8 rounded-3xl max-w-2xl w-full shadow-2xl border border-white/10 overflow-hidden">
+            <button 
+              onClick={() => setShowHelp(false)}
+              className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+            >
+              <X size={24} />
+            </button>
+
+            <div className="flex items-center gap-4 mb-6">
+              <div className="bg-blue-500/20 p-3 rounded-2xl">
+                <HelpCircle className="text-blue-400" size={32} />
+              </div>
+              <h2 className="text-2xl font-bold text-white">How to Add Data</h2>
+            </div>
+
+            <div className="space-y-6">
+              <p className="text-gray-400 leading-relaxed">
+                Add your scene directories and configuration to the following folder:
+                <br />
+                <code className="bg-white/5 px-3 py-1.5 rounded text-blue-300 select-all block mt-3 font-mono text-sm border border-white/5">
+                  public/inference_comparison/
+                </code>
+              </p>
+
+              <div className="bg-black/40 p-5 rounded-2xl border border-white/5">
+                <p className="text-gray-300 font-semibold mb-3">Expected directory structure:</p>
+                <pre className="text-gray-400 font-mono text-sm leading-relaxed overflow-x-auto">
+                  public/inference_comparison/<br />
+                  ├── rs19-config.json<br />
+                  └── rs00033/  <span className="text-gray-600 ml-4"># Scene directory</span><br />
+                      ├── input.jpg <span className="text-gray-600 ml-4"># Original RGB image</span><br />
+                      ├── gt.png    <span className="text-gray-600 ml-4"># Ground truth mask</span><br />
+                      ├── model1.png<span className="text-gray-600 ml-4"># Auto-discovered</span><br />
+                      └── model2.png<span className="text-gray-600 ml-4"># Auto-discovered</span>
+                </pre>
+              </div>
+
+              <div className="pt-6 border-t border-white/10">
+                <p className="text-gray-400 mb-4 font-medium flex items-center gap-2">
+                  <Activity size={18} className="text-blue-400" />
+                  Automation Script
+                </p>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-blue-500/5 border border-blue-500/10">
+                  <p className="text-sm text-gray-300">
+                    Use this script to automatically generate the required layout from MMSegmentation outputs.
+                  </p>
+                  <a 
+                    href="https://github.com/arianizadi/mmseg-arian/blob/main/tools/run_all_models_inference.py"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-sm font-bold shadow-lg shadow-blue-500/20 flex-shrink-0"
+                  >
+                    Get Script
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
