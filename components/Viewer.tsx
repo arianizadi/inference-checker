@@ -345,6 +345,7 @@ export default function Viewer({ scenes, config }: ViewerProps) {
                   maskSrcB={getMaskSrc(rightIndex)}
                   gtMaskSrc={`${basePath}/${scene.groundTruth}`}
                   numClasses={config.labels.length}
+                  hiddenClasses={hiddenClasses}
                   opacity={opacity}
                   onHover={handleDiffHover}
                 />

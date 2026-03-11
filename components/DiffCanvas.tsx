@@ -8,6 +8,7 @@ interface DiffCanvasProps {
   maskSrcB: string;
   gtMaskSrc: string;
   numClasses: number;
+  hiddenClasses: Set<number>;
   opacity: number;
   onHover?: (info: { classA: number | null; classB: number | null; classGT: number | null } | null, x: number, y: number) => void;
   className?: string;
@@ -24,6 +25,7 @@ export default function DiffCanvas({
   maskSrcB,
   gtMaskSrc,
   numClasses,
+  hiddenClasses,
   opacity,
   onHover,
   className = "",
@@ -75,11 +77,74 @@ export default function DiffCanvas({
     });
   }, []);
 
+  const renderDiff = useCallback((
+    ctx: CanvasRenderingContext2D,
+    maskA: Uint8Array,
+    maskB: Uint8Array,
+    maskGT: Uint8Array,
+    width: number,
+    height: number
+  ) => {
+    const canvas = ctx.canvas;
+    canvas.width = width;
+    canvas.height = height;
+
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+
+    for (let i = 0; i < maskA.length; i++) {
+        const a = maskA[i];
+        const b = maskB[i];
+        const gt = maskGT[i];
+        const px = i * 4;
+
+        // Skip ignore pixels and globally hidden pixels
+        if (gt === 255 || gt >= numClasses || (hiddenClasses.has(gt) && hiddenClasses.has(a) && hiddenClasses.has(b))) {
+            data[px + 3] = 0;
+            continue;
+        }
+
+        let color: number[];
+        if (a === b) {
+            // Models agree
+            color = a === gt ? AGREE_CORRECT : AGREE_WRONG;
+        } else {
+            // Models disagree
+            color = DISAGREE;
+        }
+
+        data[px] = color[0];
+        data[px + 1] = color[1];
+        data[px + 2] = color[2];
+        data[px + 3] = 255;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }, [numClasses, hiddenClasses]);
+
+  // Re-render when hidden classes change (without reloading mask)
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas || !maskARef.current || !maskBRef.current || !maskGTRef.current) return;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+    
+    renderDiff(
+      ctx,
+      maskARef.current,
+      maskBRef.current,
+      maskGTRef.current,
+      canvas.width,
+      canvas.height
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenClasses, renderDiff]);
+
   // Load all three masks and compute diff
   useEffect(() => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
     Promise.all([
@@ -104,52 +169,8 @@ export default function DiffCanvas({
       renderDiff(ctx, maskA, maskB, maskGT, width, height);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [maskSrcA, maskSrcB, gtMaskSrc, readMaskIndices]);
+  }, [maskSrcA, maskSrcB, gtMaskSrc, readMaskIndices, renderDiff]);
 
-  const renderDiff = (
-    ctx: CanvasRenderingContext2D,
-    maskA: Uint8Array,
-    maskB: Uint8Array,
-    maskGT: Uint8Array,
-    width: number,
-    height: number
-  ) => {
-    const canvas = ctx.canvas;
-    canvas.width = width;
-    canvas.height = height;
-
-    const imageData = ctx.createImageData(width, height);
-    const data = imageData.data;
-
-    for (let i = 0; i < maskA.length; i++) {
-      const a = maskA[i];
-      const b = maskB[i];
-      const gt = maskGT[i];
-      const px = i * 4;
-
-      // Skip ignore pixels
-      if (gt === 255 || gt >= numClasses) {
-        data[px + 3] = 0;
-        continue;
-      }
-
-      let color: number[];
-      if (a === b) {
-        // Models agree
-        color = a === gt ? AGREE_CORRECT : AGREE_WRONG;
-      } else {
-        // Models disagree
-        color = DISAGREE;
-      }
-
-      data[px] = color[0];
-      data[px + 1] = color[1];
-      data[px + 2] = color[2];
-      data[px + 3] = 255;
-    }
-
-    ctx.putImageData(imageData, 0, 0);
-  };
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {

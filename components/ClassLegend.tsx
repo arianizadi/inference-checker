@@ -6,7 +6,7 @@ interface ClassLegendProps {
   labels: { color: [number, number, number]; name: string; readable: string }[];
   hiddenClasses: Set<number>;
   onToggleClass: (classIndex: number) => void;
-  classIoUs?: { classIndex: number; iou: number }[];
+  classIoUs?: { classIndex: number; iou: number; intersection?: number; gtPixels?: number }[];
 }
 
 export default function ClassLegend({
@@ -15,11 +15,12 @@ export default function ClassLegend({
   onToggleClass,
   classIoUs,
 }: ClassLegendProps) {
-  // Build IoU lookup map
-  const iouMap = new Map<number, number>();
+  // Build Stats lookup map
+  const statsMap = new Map<number, { iou: number; acc: number }>();
   if (classIoUs) {
     for (const c of classIoUs) {
-      iouMap.set(c.classIndex, c.iou);
+      const acc = c.gtPixels && c.intersection !== undefined ? (c.intersection / c.gtPixels) * 100 : 0;
+      statsMap.set(c.classIndex, { iou: c.iou, acc });
     }
   }
 
@@ -37,7 +38,7 @@ export default function ClassLegend({
           {labels.map((label, idx) => {
             const isHidden = hiddenClasses.has(idx);
             const rgbStr = `rgb(${label.color.join(",")})`;
-            const iou = iouMap.get(idx);
+            const stats = statsMap.get(idx);
 
             return (
               <motion.div
@@ -58,26 +59,52 @@ export default function ClassLegend({
                       className="w-3.5 h-3.5 rounded-sm shadow-sm flex-shrink-0"
                       style={{ backgroundColor: rgbStr }}
                     />
-                    <span className="font-medium text-sm capitalize truncate max-w-[160px]">
+                    <span className="font-medium text-sm capitalize truncate max-w-[140px]">
                       {label.readable.split("(")[0].trim()}
                     </span>
                   </div>
-                  {iou !== undefined && (
-                    <span className="text-sm font-bold opacity-90 tabular-nums">
-                      {iou.toFixed(1)}%
-                    </span>
+                  {stats !== undefined && (
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold leading-none mb-0.5">IoU</span>
+                        <span className="text-[13px] font-bold opacity-90 tabular-nums leading-none">
+                          {stats.iou.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold leading-none mb-0.5">Acc</span>
+                        <span className="text-[13px] font-bold opacity-90 tabular-nums leading-none">
+                          {stats.acc.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {iou !== undefined && (
-                  <div className="w-full bg-black/40 h-1.5 rounded-full overflow-hidden">
-                    <motion.div
-                      className="h-full rounded-full"
-                      style={{ backgroundColor: rgbStr }}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${Math.min(iou, 100)}%` }}
-                      transition={{ duration: 0.8, ease: "easeOut" }}
-                    />
+                {stats !== undefined && (
+                  <div className="w-full space-y-1.5 mt-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-black/40 h-1.5 rounded-full overflow-hidden">
+                        <motion.div
+                          className="h-full rounded-full"
+                          style={{ backgroundColor: rgbStr }}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min(stats.iou, 100)}%` }}
+                          transition={{ duration: 0.8, ease: "easeOut" }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-black/40 h-1.5 rounded-full overflow-hidden">
+                        <motion.div
+                          className="h-full rounded-full opacity-60"
+                          style={{ backgroundColor: rgbStr }}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min(stats.acc, 100)}%` }}
+                          transition={{ duration: 0.8, ease: "easeOut" }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
               </motion.div>
