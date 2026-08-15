@@ -7,6 +7,7 @@ import type { SegmentationConfig } from "./data";
 import {
   computeStatsFromMasks,
   MASK_LIMITS,
+  readMaskHeader,
   readMaskIndices,
   type IndexMask,
 } from "./stats";
@@ -156,5 +157,28 @@ describe("readMaskIndices", () => {
     header[25] = 0;
     fs.writeFileSync(oversized, header);
     expect(() => readMaskIndices(oversized)).toThrow("dimensions");
+  });
+
+  test("rejects an interlaced PNG header before reading its payload", () => {
+    const interlaced = path.join(
+      os.tmpdir(),
+      `inference-checker-interlaced-mask-${process.pid}.png`,
+    );
+    temporaryFiles.push(interlaced);
+    const payload = Buffer.alloc(255 * 1024);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(payload);
+    payload.writeUInt32BE(13, 8);
+    payload.write("IHDR", 12, "ascii");
+    payload.writeUInt32BE(16, 16);
+    payload.writeUInt32BE(16, 20);
+    payload[24] = 8;
+    payload[25] = 0;
+    payload[26] = 0;
+    payload[27] = 0;
+    payload[28] = 1;
+    fs.writeFileSync(interlaced, payload);
+
+    expect(() => readMaskHeader(interlaced)).toThrow("must be non-interlaced");
+    expect(() => readMaskIndices(interlaced)).toThrow("must be non-interlaced");
   });
 });

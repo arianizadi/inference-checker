@@ -53,6 +53,7 @@ export interface SceneData {
 
 export interface BundleIndex {
   root: string;
+  generation: number;
   config: SegmentationConfig;
   scenes: SceneData[];
   scenesById: ReadonlyMap<string, SceneData>;
@@ -76,6 +77,7 @@ export const BUNDLE_LIMITS = {
 } as const;
 const MAX_CACHED_BUNDLE_ROOTS = 4;
 const bundleIndexCache = new Map<string, BundleIndex>();
+let nextBundleGeneration = 1;
 const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const INPUT_FILENAME = /^input\.(?:jpe?g|png|webp)$/i;
 const PROVENANCE_FIELDS = [
@@ -580,6 +582,7 @@ export function getBundleIndex(root = resolveInferenceRoot()): BundleIndex {
   const scenes = getAllScenes(resolvedRoot);
   const index: BundleIndex = {
     root: resolvedRoot,
+    generation: nextBundleGeneration++,
     config,
     scenes,
     scenesById: new Map(scenes.map((scene) => [scene.id, scene])),

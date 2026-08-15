@@ -578,7 +578,7 @@ export default function Viewer({ scenes, config, setupError }: ViewerProps) {
               </div>
 
               <div className="pt-6 border-t border-white/10 text-sm text-gray-400">
-                Masks must be exact 8-bit grayscale class-index PNGs; RGB, palette, and 16-bit masks are rejected. Ground truth may also use the configured ignore index. See README.md for the complete schema and optional <code className="text-blue-300">scene.json</code> provenance.
+                Masks must be exact non-interlaced 8-bit grayscale class-index PNGs; RGB, palette, interlaced, and 16-bit masks are rejected. Ground truth may also use the configured ignore index. See README.md for the complete schema and optional <code className="text-blue-300">scene.json</code> provenance.
               </div>
             </div>
           </div>

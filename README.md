@@ -66,7 +66,7 @@ public/inference_comparison/
 Each complete scene must contain:
 
 - Exactly one `input.jpg`, `input.jpeg`, `input.png`, or `input.webp` RGB image.
-- `gt.png`, an exact 8-bit grayscale PNG whose sample stores a class index per pixel.
+- `gt.png`, an exact non-interlaced 8-bit grayscale PNG whose sample stores a class index per pixel.
 - Zero or more model PNGs using the same encoding. Every PNG other than `gt.png` and the selected `input.*` image is treated as a prediction.
 - Matching width and height for ground truth and every prediction. The diff view also requires the input image to have the same dimensions.
 
@@ -158,7 +158,7 @@ Repeat with `--name city-to-rail` and the transfer run's exact resolved config/c
 
 ## Current limitations
 
-- Masks must be exact 8-bit grayscale class-index PNGs. RGB, palette, and 16-bit PNGs are rejected rather than interpreted heuristically.
+- Masks must be exact non-interlaced 8-bit grayscale class-index PNGs. RGB, palette, interlaced, and 16-bit PNGs are rejected rather than interpreted heuristically.
 - Metrics are computed lazily for the selected scene in the Next.js server process and are not persisted.
 - The viewer validates mask pairs when metrics load; it does not replace a full dataset-integrity audit.
 - The repository does not bundle a training framework. Exporters should write this explicit contract and include their exact taxonomy in `config.json`.

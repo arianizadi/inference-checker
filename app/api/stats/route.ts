@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBundleIndex, getSceneImagePath } from "../../../lib/data";
 import {
   computeStatsFromMasks,
+  readMaskHeader,
   readMaskIndices,
   type ModelStats,
 } from "../../../lib/stats";
@@ -72,8 +73,14 @@ function cacheStats(key: string, payload: StatsPayload): void {
   }
 }
 
-export function validateStatsWorkload(pixelCount: number, modelCount: number): void {
-  const comparisons = pixelCount * modelCount;
+export function validateStatsWorkload(predictionPixelCounts: readonly number[]): void {
+  let comparisons = 0;
+  for (const pixelCount of predictionPixelCounts) {
+    if (!Number.isSafeInteger(pixelCount) || pixelCount < 0) {
+      throw new Error(`Invalid prediction pixel count: ${pixelCount}`);
+    }
+    comparisons += pixelCount;
+  }
   if (!Number.isSafeInteger(comparisons) || comparisons > MAX_STATS_PIXEL_COMPARISONS) {
     throw new Error(
       `Scene requires ${comparisons.toLocaleString()} model-pixel comparisons; limit is ` +
@@ -102,7 +109,7 @@ export function GET(request: NextRequest) {
     );
   }
 
-  const cacheKey = `${bundle.root}\0${scene.id}`;
+  const cacheKey = `${bundle.root}\0${bundle.generation}\0${scene.id}`;
   const cached = cachedStats(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -118,27 +125,53 @@ export function GET(request: NextRequest) {
       modelName: model.name,
       message: `Invalid ground truth for ${scene.id}: ${message}`,
     }));
-    cacheStats(cacheKey, payload);
     return NextResponse.json(payload);
+  }
+
+  const predictions: Array<{
+    model: (typeof scene.models)[number];
+    path: string;
+    pixels: number;
+    header: { width: number; height: number };
+  }> = [];
+  for (const model of scene.models) {
+    try {
+      const predictionPath = getSceneImagePath(
+        scene.id,
+        model.filename,
+        bundle.root,
+      );
+      const header = readMaskHeader(predictionPath);
+      if (header.width !== groundTruth.width || header.height !== groundTruth.height) {
+        throw new Error(
+          `Size mismatch for ${model.name}: GT(${groundTruth.width}x${groundTruth.height}) ` +
+            `vs prediction(${header.width}x${header.height})`,
+        );
+      }
+      predictions.push({
+        model,
+        path: predictionPath,
+        pixels: header.width * header.height,
+        header,
+      });
+    } catch (error) {
+      payload.errors.push({ modelName: model.name, message: errorMessage(error) });
+    }
   }
 
   try {
-    validateStatsWorkload(
-      groundTruth.width * groundTruth.height,
-      scene.models.length,
-    );
+    validateStatsWorkload(predictions.map((prediction) => prediction.pixels));
   } catch (error) {
     const message = errorMessage(error);
-    payload.errors = scene.models.map((model) => ({ modelName: model.name, message }));
-    cacheStats(cacheKey, payload);
+    payload.errors.push(
+      ...predictions.map(({ model }) => ({ modelName: model.name, message })),
+    );
     return NextResponse.json(payload);
   }
 
-  for (const model of scene.models) {
+  for (const { model, path: predictionPath, header } of predictions) {
     try {
-      const prediction = readMaskIndices(
-        getSceneImagePath(scene.id, model.filename, bundle.root),
-      );
+      const prediction = readMaskIndices(predictionPath, header);
       payload.stats.push(
         computeStatsFromMasks(groundTruth, prediction, model.name, bundle.config),
       );
@@ -147,6 +180,6 @@ export function GET(request: NextRequest) {
     }
   }
 
-  cacheStats(cacheKey, payload);
+  if (payload.errors.length === 0) cacheStats(cacheKey, payload);
   return NextResponse.json(payload);
 }

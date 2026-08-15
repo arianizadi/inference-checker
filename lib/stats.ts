@@ -39,6 +39,12 @@ export interface IndexMask {
   height: number;
 }
 
+export interface IndexMaskHeader {
+  width: number;
+  height: number;
+  fileBytes: number;
+}
+
 export const MASK_LIMITS = {
   compressedBytes: 32 * 1024 * 1024,
   pixels: 16 * 1024 * 1024,
@@ -61,7 +67,17 @@ function validatePngHeader(data: Buffer, filePath: string): { width: number; hei
   if (depth !== 8 || colorType !== 0) {
     throw new Error(
       `Index-mask PNG ${filePath} must be 8-bit grayscale (PNG color type 0); ` +
-        `received color type ${colorType}, bit depth ${depth}`,
+      `received color type ${colorType}, bit depth ${depth}`,
+    );
+  }
+  if (data[26] !== 0 || data[27] !== 0) {
+    throw new Error(
+      `Index-mask PNG ${filePath} must use standard PNG compression and filtering`,
+    );
+  }
+  if (data[28] !== 0) {
+    throw new Error(
+      `Index-mask PNG ${filePath} must be non-interlaced (IHDR interlace method 0)`,
     );
   }
   if (
@@ -79,7 +95,7 @@ function validatePngHeader(data: Buffer, filePath: string): { width: number; hei
   return { width, height };
 }
 
-export function readMaskIndices(filePath: string): IndexMask {
+export function readMaskHeader(filePath: string): IndexMaskHeader {
   const fileBytes = fs.statSync(filePath).size;
   if (fileBytes > MASK_LIMITS.compressedBytes) {
     throw new Error(
@@ -87,8 +103,45 @@ export function readMaskIndices(filePath: string): IndexMask {
         `${MASK_LIMITS.compressedBytes.toLocaleString()} bytes`,
     );
   }
+  const headerBytes = Buffer.alloc(29);
+  const descriptor = fs.openSync(filePath, "r");
+  let bytesRead: number;
+  try {
+    bytesRead = fs.readSync(descriptor, headerBytes, 0, headerBytes.length, 0);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const header = validatePngHeader(headerBytes.subarray(0, bytesRead), filePath);
+  return { ...header, fileBytes };
+}
+
+export function readMaskIndices(
+  filePath: string,
+  requiredHeader?: Pick<IndexMaskHeader, "width" | "height">,
+): IndexMask {
+  const expectedHeader = readMaskHeader(filePath);
+  if (
+    requiredHeader &&
+    (expectedHeader.width !== requiredHeader.width ||
+      expectedHeader.height !== requiredHeader.height)
+  ) {
+    throw new Error(
+      `Index-mask dimensions changed before decode for ${filePath}: expected ` +
+        `${requiredHeader.width}x${requiredHeader.height}, received ` +
+        `${expectedHeader.width}x${expectedHeader.height}`,
+    );
+  }
   const data = fs.readFileSync(filePath);
   const header = validatePngHeader(data, filePath);
+  if (
+    data.length !== expectedHeader.fileBytes ||
+    header.width !== expectedHeader.width ||
+    header.height !== expectedHeader.height ||
+    (requiredHeader !== undefined &&
+      (header.width !== requiredHeader.width || header.height !== requiredHeader.height))
+  ) {
+    throw new Error(`Index-mask file changed while it was being read: ${filePath}`);
+  }
   let png: ReturnType<typeof PNG.sync.read>;
   try {
     png = PNG.sync.read(data);

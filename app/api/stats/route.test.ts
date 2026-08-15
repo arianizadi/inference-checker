@@ -20,9 +20,23 @@ let temporaryRoot: string | undefined;
 const previousRoot = process.env[BUNDLE_ROOT_ENV];
 
 function grayscalePng(classIndex: number): Buffer {
-  const png = new PNG({ width: 1, height: 1 });
-  png.data.set([classIndex, classIndex, classIndex, 255]);
+  const png = new PNG({ width: 2, height: 2 });
+  for (let pixel = 0; pixel < 4; pixel++) {
+    png.data.set([classIndex, classIndex, classIndex, 255], pixel * 4);
+  }
   return PNG.sync.write(png, { colorType: 0, inputColorType: 6, bitDepth: 8 });
+}
+
+function fakePngHeader(width: number, height: number): Buffer {
+  const header = Buffer.alloc(29);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);
+  header.writeUInt32BE(13, 8);
+  header.write("IHDR", 12, "ascii");
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  header[24] = 8;
+  header[25] = 0;
+  return header;
 }
 
 function createBundle(sceneCount: number): string {
@@ -34,6 +48,7 @@ function createBundle(sceneCount: number): string {
       version: 1,
       labels: [
         { name: "object", readable: "Object", evaluate: true, color: [1, 2, 3] },
+        { name: "other", readable: "Other", evaluate: true, color: [4, 5, 6] },
       ],
     }),
   );
@@ -59,10 +74,10 @@ afterEach(() => {
 
 describe("stats cache", () => {
   test("rejects a stats workload above the fixed CPU budget", () => {
-    expect(() => validateStatsWorkload(16 * 1024 * 1024, 9)).toThrow(
+    expect(() => validateStatsWorkload(Array(9).fill(16 * 1024 * 1024))).toThrow(
       "model-pixel comparisons",
     );
-    expect(() => validateStatsWorkload(1024 * 2048, 3)).not.toThrow();
+    expect(() => validateStatsWorkload(Array(3).fill(1024 * 2048))).not.toThrow();
   });
 
   test("deduplicates repeated scene work and enforces entry/byte bounds", async () => {
@@ -85,5 +100,50 @@ describe("stats cache", () => {
     const usage = statsCacheUsage();
     expect(usage.entries).toBe(STATS_CACHE_LIMITS.entries);
     expect(usage.bytes).toBeLessThanOrEqual(STATS_CACHE_LIMITS.bytes);
+  });
+
+  test("preflights every prediction dimension before decoding", async () => {
+    const root = createBundle(1);
+    const scene = path.join(root, "scene-0");
+    for (let index = 0; index < 64; index++) {
+      fs.writeFileSync(
+        path.join(scene, `oversized-${index}.png`),
+        fakePngHeader(4000, 4000),
+      );
+    }
+    process.env[BUNDLE_ROOT_ENV] = root;
+
+    const started = performance.now();
+    const response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
+    const elapsed = performance.now() - started;
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.stats).toHaveLength(1);
+    expect(body.errors).toHaveLength(64);
+    expect(body.errors[0].message).toContain("Size mismatch");
+    expect(statsCacheUsage().entries).toBe(0);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  test("does not cache errors and invalidates successes across bundle generations", async () => {
+    const root = createBundle(1);
+    const prediction = path.join(root, "scene-0", "model.png");
+    process.env[BUNDLE_ROOT_ENV] = root;
+
+    fs.writeFileSync(prediction, "broken");
+    let response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
+    expect((await response.json()).errors).toHaveLength(1);
+    expect(statsCacheUsage().entries).toBe(0);
+
+    fs.writeFileSync(prediction, grayscalePng(0));
+    response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
+    expect((await response.json()).stats[0].mIoU).toBe(100);
+    expect(statsCacheUsage().entries).toBe(1);
+
+    fs.writeFileSync(prediction, grayscalePng(1));
+    clearBundleIndexCache();
+    response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
+    expect((await response.json()).stats[0].mIoU).toBe(0);
+    expect(statsCacheUsage().entries).toBe(2);
   });
 });
