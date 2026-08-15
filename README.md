@@ -23,7 +23,7 @@ INFERENCE_CHECKER_BUNDLE_ROOT=/path/to/bundle bun run dev
 
 Relative environment-variable paths resolve from the repository directory. The default remains `public/inference_comparison/`. Bundle roots and artifacts may not be symbolic links, and artifact requests are restricted to validated files inside the selected root.
 
-Bundles are indexed once per server process and treated as immutable snapshots. Restart `bun run inspect` after changing bundle contents. The index is bounded to four roots; lazy per-scene metric results are held in a 16-entry, 8 MiB LRU cache. Configs, per-file and aggregate manifests, scene/file counts, compressed mask bytes, decoded mask dimensions/pixels, and total model-pixel comparisons per request have explicit safety limits so malformed or extreme bundles fail before unbounded work.
+Bundles are indexed once per server process and treated as immutable snapshots. Restart `bun run inspect` after changing bundle contents. The index is bounded to four roots; lazy per-scene metric and deterministic validation-error results are held in a 16-entry, 8 MiB LRU cache. Configs, per-file and aggregate manifests, scene/file counts, compressed mask bytes, decoded mask dimensions/pixels, and total model-pixel comparisons per request have explicit safety limits so malformed or extreme bundles fail before unbounded work.
 
 ## Quick start
 

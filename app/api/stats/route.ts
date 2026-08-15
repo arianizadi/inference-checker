@@ -125,6 +125,7 @@ export function GET(request: NextRequest) {
       modelName: model.name,
       message: `Invalid ground truth for ${scene.id}: ${message}`,
     }));
+    cacheStats(cacheKey, payload);
     return NextResponse.json(payload);
   }
 
@@ -166,6 +167,7 @@ export function GET(request: NextRequest) {
     payload.errors.push(
       ...predictions.map(({ model }) => ({ modelName: model.name, message })),
     );
+    cacheStats(cacheKey, payload);
     return NextResponse.json(payload);
   }
 
@@ -180,6 +182,6 @@ export function GET(request: NextRequest) {
     }
   }
 
-  if (payload.errors.length === 0) cacheStats(cacheKey, payload);
+  cacheStats(cacheKey, payload);
   return NextResponse.json(payload);
 }

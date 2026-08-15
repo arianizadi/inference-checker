@@ -121,11 +121,11 @@ describe("stats cache", () => {
     expect(body.stats).toHaveLength(1);
     expect(body.errors).toHaveLength(64);
     expect(body.errors[0].message).toContain("Size mismatch");
-    expect(statsCacheUsage().entries).toBe(0);
+    expect(statsCacheUsage().entries).toBe(1);
     expect(elapsed).toBeLessThan(1000);
   });
 
-  test("does not cache errors and invalidates successes across bundle generations", async () => {
+  test("caches deterministic errors and invalidates results across bundle generations", async () => {
     const root = createBundle(1);
     const prediction = path.join(root, "scene-0", "model.png");
     process.env[BUNDLE_ROOT_ENV] = root;
@@ -133,17 +133,22 @@ describe("stats cache", () => {
     fs.writeFileSync(prediction, "broken");
     let response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
     expect((await response.json()).errors).toHaveLength(1);
-    expect(statsCacheUsage().entries).toBe(0);
+    expect(statsCacheUsage().entries).toBe(1);
 
     fs.writeFileSync(prediction, grayscalePng(0));
     response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
-    expect((await response.json()).stats[0].mIoU).toBe(100);
+    expect((await response.json()).errors).toHaveLength(1);
     expect(statsCacheUsage().entries).toBe(1);
+
+    clearBundleIndexCache();
+    response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
+    expect((await response.json()).stats[0].mIoU).toBe(100);
+    expect(statsCacheUsage().entries).toBe(2);
 
     fs.writeFileSync(prediction, grayscalePng(1));
     clearBundleIndexCache();
     response = GET(new NextRequest("http://localhost/api/stats?sceneId=scene-0"));
     expect((await response.json()).stats[0].mIoU).toBe(0);
-    expect(statsCacheUsage().entries).toBe(2);
+    expect(statsCacheUsage().entries).toBe(3);
   });
 });
