@@ -1,45 +1,52 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getAllScenes, getConfig } from '../../../lib/data';
-import { computeStats, ModelStats } from '../../../lib/stats';
+import { NextRequest, NextResponse } from "next/server";
+import { getAllScenes, getConfig } from "../../../lib/data";
+import { computeStats, type ModelStats } from "../../../lib/stats";
 
-// In-memory cache: sceneId -> model stats array
-const statsCache = new Map<string, ModelStats[]>();
+export interface ModelStatsError {
+  modelName: string;
+  message: string;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const sceneId = searchParams.get('sceneId');
-
+  const sceneId = new URL(req.url).searchParams.get("sceneId");
   if (!sceneId) {
-    return NextResponse.json({ error: 'Missing sceneId parameter' }, { status: 400 });
+    return NextResponse.json({ error: "Missing sceneId parameter" }, { status: 400 });
   }
 
-  // Check cache first
-  if (statsCache.has(sceneId)) {
-    return NextResponse.json({ stats: statsCache.get(sceneId) });
+  let scene;
+  let config;
+  try {
+    config = getConfig();
+    scene = getAllScenes().find((candidate) => candidate.id === sceneId);
+  } catch (error) {
+    return NextResponse.json({ error: errorMessage(error) }, { status: 422 });
   }
-
-  // Find the scene
-  const scenes = getAllScenes();
-  const scene = scenes.find((s) => s.id === sceneId);
   if (!scene) {
-    return NextResponse.json({ error: `Scene ${sceneId} not found` }, { status: 404 });
+    return NextResponse.json({ error: `Scene ${JSON.stringify(sceneId)} not found` }, { status: 404 });
   }
 
-  // Compute stats for all models in this scene
-  const config = getConfig();
-  const modelStats: ModelStats[] = [];
-
+  const stats: ModelStats[] = [];
+  const errors: ModelStatsError[] = [];
   for (const model of scene.models) {
     try {
-      const stats = computeStats(sceneId, scene.groundTruth, model.filename, model.name);
-      modelStats.push(stats);
-    } catch (e) {
-      console.error(`Error computing stats for ${model.name} in ${sceneId}:`, e);
+      stats.push(
+        computeStats(
+          scene.id,
+          scene.groundTruth,
+          model.filename,
+          model.name,
+          undefined,
+          config,
+        ),
+      );
+    } catch (error) {
+      errors.push({ modelName: model.name, message: errorMessage(error) });
     }
   }
 
-  // Cache the result
-  statsCache.set(sceneId, modelStats);
-
-  return NextResponse.json({ stats: modelStats });
+  return NextResponse.json({ stats, errors });
 }
