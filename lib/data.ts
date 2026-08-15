@@ -51,6 +51,7 @@ export interface SceneData {
   provenance?: ArtifactProvenance;
 }
 
+export const BUNDLE_ROOT_ENV = "INFERENCE_CHECKER_BUNDLE_ROOT";
 export const INFERENCE_DIR = path.join(
   process.cwd(),
   "public",
@@ -78,6 +79,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function describeFile(filePath: string): string {
   return path.relative(process.cwd(), filePath) || path.basename(filePath);
+}
+
+export function resolveInferenceRoot(
+  configuredRoot = process.env[BUNDLE_ROOT_ENV],
+  cwd = process.cwd(),
+): string {
+  if (configuredRoot === undefined || configuredRoot.trim() === "") {
+    return path.resolve(cwd, "public", "inference_comparison");
+  }
+  return path.resolve(cwd, configuredRoot);
+}
+
+export function validateBundleRoot(root: string): string {
+  const resolved = path.resolve(root);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Bundle directory does not exist: ${resolved}`);
+  }
+  const stats = fs.lstatSync(resolved);
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Bundle directory may not be a symbolic link: ${resolved}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`Bundle path is not a directory: ${resolved}`);
+  }
+  return resolved;
 }
 
 export function assertSafePathComponent(value: string, field: string): void {
@@ -247,7 +273,7 @@ export function validateConfig(value: unknown): SegmentationConfig {
   };
 }
 
-export function getConfig(root = INFERENCE_DIR): SegmentationConfig {
+export function getConfig(root = resolveInferenceRoot()): SegmentationConfig {
   const configName = CONFIG_FILENAMES.find((name) =>
     fs.existsSync(resolveArtifactPath(root, name)),
   );
@@ -380,7 +406,7 @@ function readSceneManifest(sceneDir: string): SceneManifest | undefined {
 }
 
 /** Discover validated scene metadata without decoding the potentially large PNG masks. */
-export function getAllScenes(root = INFERENCE_DIR): SceneData[] {
+export function getAllScenes(root = resolveInferenceRoot()): SceneData[] {
   if (!fs.existsSync(root)) return [];
   const rootStats = fs.lstatSync(root);
   if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
@@ -389,6 +415,9 @@ export function getAllScenes(root = INFERENCE_DIR): SceneData[] {
 
   const scenes: SceneData[] = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Symbolic links are not allowed in bundle roots: ${entry.name}`);
+    }
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
     assertSafePathComponent(entry.name, "scene directory name");
 
@@ -401,6 +430,12 @@ export function getAllScenes(root = INFERENCE_DIR): SceneData[] {
     const files = fs
       .readdirSync(sceneDir, { withFileTypes: true })
       .filter((file) => !file.name.startsWith("."));
+    const linkedFile = files.find((file) => file.isSymbolicLink());
+    if (linkedFile) {
+      throw new Error(
+        `Symbolic links are not allowed in scene ${entry.name}: ${linkedFile.name}`,
+      );
+    }
     const inputFiles = files.filter((file) => file.isFile() && INPUT_FILENAME.test(file.name));
     const groundTruth = files.find((file) => file.isFile() && file.name === "gt.png");
 
@@ -466,7 +501,7 @@ export function getAllScenes(root = INFERENCE_DIR): SceneData[] {
 export function getSceneImagePath(
   sceneId: string,
   filename: string,
-  root = INFERENCE_DIR,
+  root = resolveInferenceRoot(),
 ): string {
   const filePath = resolveArtifactPath(root, sceneId, filename);
   if (!fs.existsSync(filePath) || !fs.lstatSync(filePath).isFile()) {

@@ -4,6 +4,25 @@ Inference Checker is a local, dataset-agnostic viewer for semantic-segmentation 
 
 It reads files from disk; it does not upload images or checkpoints. The full local artifact directory is gitignored by default so large datasets and model outputs are not accidentally committed.
 
+## Inspect a portable bundle
+
+The folder written by a compatible exporter is the portable, self-describing bundle. It contains `config.json`, scene folders, masks, images, and provenance. You can zip that folder, move it to another machine, unzip it unchanged, and inspect it without copying any data into this repository:
+
+```bash
+bun install
+bun run inspect -- /absolute/or/relative/path/to/bundle
+```
+
+The command validates the bundle's root, config, scene layout, filenames, and provenance references, then launches the viewer at <http://localhost:3000>. PNG dimensions and IDs are validated lazily when scene metrics load. Press `Ctrl-C` to stop the local server.
+
+For scripting or an existing Next.js process, set the same root explicitly:
+
+```bash
+INFERENCE_CHECKER_BUNDLE_ROOT=/path/to/bundle bun run dev
+```
+
+Relative environment-variable paths resolve from the repository directory. The default remains `public/inference_comparison/`. Bundle roots and artifacts may not be symbolic links, and artifact requests are restricted to validated files inside the selected root.
+
 ## Quick start
 
 Requirements: [Bun](https://bun.sh/) and a modern browser.
@@ -141,3 +160,4 @@ Repeat with `--name city-to-rail` and the transfer run's exact resolved config/c
 - Metrics are computed lazily for the selected scene in the Next.js server process and are not persisted.
 - The viewer validates mask pairs when metrics load; it does not replace a full dataset-integrity audit.
 - The repository does not bundle a training framework. Exporters should write this explicit contract and include their exact taxonomy in `config.json`.
+- The current launcher is a Bun repository command. A future release can wrap the same bundle contract in an `npx` package or Docker image without changing bundle contents.

@@ -5,7 +5,9 @@ import path from "path";
 import {
   getAllScenes,
   getConfig,
+  resolveInferenceRoot,
   resolveArtifactPath,
+  validateBundleRoot,
   validateConfig,
 } from "./data";
 
@@ -86,6 +88,24 @@ describe("validateConfig", () => {
 });
 
 describe("artifact loading", () => {
+  test("resolves an explicit external root and rejects invalid bundle roots", () => {
+    const cwd = temporaryDirectory();
+    const bundle = path.join(cwd, "bundle");
+    fs.mkdirSync(bundle);
+    expect(resolveInferenceRoot("bundle", cwd)).toBe(bundle);
+    expect(resolveInferenceRoot(bundle, "/ignored")).toBe(bundle);
+    expect(validateBundleRoot(bundle)).toBe(bundle);
+    expect(() => validateBundleRoot(path.join(cwd, "missing"))).toThrow("does not exist");
+
+    const file = path.join(cwd, "not-a-directory");
+    fs.writeFileSync(file, "fixture");
+    expect(() => validateBundleRoot(file)).toThrow("not a directory");
+
+    const link = path.join(cwd, "linked-bundle");
+    fs.symlinkSync(bundle, link);
+    expect(() => validateBundleRoot(link)).toThrow("may not be a symbolic link");
+  });
+
   test("prefers config.json while retaining rs19-config.json fallback", () => {
     const root = temporaryDirectory();
     fs.writeFileSync(

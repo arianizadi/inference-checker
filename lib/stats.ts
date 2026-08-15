@@ -3,7 +3,7 @@ import { PNG } from "pngjs";
 import {
   getConfig,
   getSceneImagePath,
-  INFERENCE_DIR,
+  resolveInferenceRoot,
   type SegmentationConfig,
 } from "./data";
 
@@ -179,7 +179,7 @@ export function computeStats(
   gtFilename: string,
   modelFilename: string,
   modelName: string,
-  root = INFERENCE_DIR,
+  root = resolveInferenceRoot(),
   config = getConfig(root),
 ): ModelStats {
   const gt = readMaskIndices(getSceneImagePath(sceneId, gtFilename, root));

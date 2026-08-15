@@ -182,8 +182,9 @@ export default function Viewer({ scenes, config, setupError }: ViewerProps) {
     );
   }
 
-  const basePath = `/inference_comparison/${scene.id}`;
-  const inputSrc = `${basePath}/${scene.inputImage}`;
+  const artifactSrc = (filename: string) =>
+    `/api/artifact?sceneId=${encodeURIComponent(scene.id)}&filename=${encodeURIComponent(filename)}`;
+  const inputSrc = artifactSrc(scene.inputImage);
   const allModels: (ModelOption & { provenance?: ArtifactProvenance })[] = [
     { name: "Ground Truth", filename: scene.groundTruth, isGroundTruth: true },
     ...scene.models.map((model) => ({
@@ -198,7 +199,7 @@ export default function Viewer({ scenes, config, setupError }: ViewerProps) {
   const safeLeftIndex = clampModelIndex(leftIndex);
   const safeRightIndex = clampModelIndex(rightIndex);
   const getMaskSrc = (index: number) =>
-    `${basePath}/${allModels[clampModelIndex(index)].filename}`;
+    artifactSrc(allModels[clampModelIndex(index)].filename);
   const currentSceneStats = sceneStats.get(scene.id);
   const currentModel = allModels[safeSelectedIndex];
   const currentStats = !currentModel.isGroundTruth
@@ -430,7 +431,7 @@ export default function Viewer({ scenes, config, setupError }: ViewerProps) {
                   inputImageSrc={inputSrc}
                   maskSrcA={getMaskSrc(safeLeftIndex)}
                   maskSrcB={getMaskSrc(safeRightIndex)}
-                  gtMaskSrc={`${basePath}/${scene.groundTruth}`}
+                  gtMaskSrc={artifactSrc(scene.groundTruth)}
                   numClasses={config.labels.length}
                   hiddenClasses={hiddenClasses}
                   opacity={opacity}

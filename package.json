@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "bun test"
+    "test": "bun test",
+    "inspect": "bun scripts/inspect.ts"
   },
   "dependencies": {
     "framer-motion": "^12.35.2",
