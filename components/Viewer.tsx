@@ -1,34 +1,43 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Activity, LayoutTemplate, ChevronLeft, ChevronRight, Loader2, HelpCircle, X, ExternalLink } from "lucide-react";
+import { Activity, LayoutTemplate, ChevronLeft, ChevronRight, Loader2, HelpCircle, X, AlertTriangle } from "lucide-react";
 import MaskCanvas from "./MaskCanvas";
 import DiffCanvas from "./DiffCanvas";
 import ClassLegend from "./ClassLegend";
 import HoverTooltip from "./HoverTooltip";
 import DiffTooltip from "./DiffTooltip";
 import ModelSelector, { ViewMode, ModelOption } from "./ModelSelector";
-import type { RS19Config } from "../lib/data";
+import type { ArtifactProvenance, SegmentationConfig } from "../lib/data";
 import type { ModelStats } from "../lib/stats";
 
 interface ViewerModel {
   name: string;
   filename: string;
+  provenance?: ArtifactProvenance;
 }
 
 interface SceneInfo {
   id: string;
+  title?: string;
   inputImage: string;
   groundTruth: string;
   models: ViewerModel[];
+  provenance?: ArtifactProvenance;
 }
 
 interface ViewerProps {
   scenes: SceneInfo[];
-  config: RS19Config;
+  config: SegmentationConfig;
+  setupError?: string;
 }
 
-export default function Viewer({ scenes, config }: ViewerProps) {
+interface ModelStatsError {
+  modelName: string;
+  message: string;
+}
+
+export default function Viewer({ scenes, config, setupError }: ViewerProps) {
   const [sceneIndex, setSceneIndex] = useState(0);
   const [mode, setMode] = useState<ViewMode>("single");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -39,7 +48,9 @@ export default function Viewer({ scenes, config }: ViewerProps) {
 
   // Lazy stats
   const [sceneStats, setSceneStats] = useState<Map<string, ModelStats[]>>(new Map());
-  const [statsLoading, setStatsLoading] = useState(false);
+  const [sceneStatsErrors, setSceneStatsErrors] = useState<Map<string, ModelStatsError[]>>(new Map());
+  const [statsRequestErrors, setStatsRequestErrors] = useState<Map<string, string>>(new Map());
+  const [statsRetryNonce, setStatsRetryNonce] = useState(0);
   const fetchedRef = useRef<Set<string>>(new Set());
 
   const [showHelp, setShowHelp] = useState(false);
@@ -64,80 +75,33 @@ export default function Viewer({ scenes, config }: ViewerProps) {
     if (fetchedRef.current.has(scene.id)) return;
     fetchedRef.current.add(scene.id);
 
-    setStatsLoading(true);
     fetch(`/api/stats?sceneId=${encodeURIComponent(scene.id)}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Stats request failed (${res.status})`);
+        return data as { stats: ModelStats[]; errors?: ModelStatsError[] };
+      })
       .then((data) => {
         setSceneStats((prev) => {
           const next = new Map(prev);
           next.set(scene.id, data.stats);
           return next;
         });
+        setSceneStatsErrors((prev) => {
+          const next = new Map(prev);
+          next.set(scene.id, data.errors ?? []);
+          return next;
+        });
       })
-      .catch((err) => console.error("Failed to fetch stats:", err))
-      .finally(() => setStatsLoading(false));
-  }, [scene]);
-
-  if (!scene) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
-        <div className="glass-panel p-10 rounded-3xl max-w-2xl border-dashed border-2 border-white/10">
-          <Activity className="text-blue-400 mx-auto mb-6 opacity-50" size={64} />
-          <h2 className="text-2xl font-bold text-white mb-4">No Inference Data Found</h2>
-          <p className="text-gray-400 mb-6 leading-relaxed">
-            To get started, please add scene directories to the following location:
-            <br />
-            <code className="bg-white/5 px-2 py-1 rounded text-blue-300 select-all block mt-3 font-mono text-sm">
-              public/inference_comparison/
-            </code>
-          </p>
-          <div className="text-left bg-black/40 p-5 rounded-xl border border-white/5 space-y-4 text-sm">
-            <div>
-              <p className="text-gray-300 font-semibold mb-2">Expected directory structure:</p>
-              <pre className="text-gray-500 font-mono leading-tight">
-                public/inference_comparison/<br />
-                ├── rs19-config.json<br />
-                └── scene_id_01/  <span className="text-gray-600">← rename as you like</span><br />
-                    ├── input.jpg <span className="text-gray-600">← original image</span><br />
-                    ├── gt.png    <span className="text-gray-600">← ground truth mask</span><br />
-                    └── model.png <span className="text-gray-600">← auto-discovered predictions</span>
-              </pre>
-            </div>
-            
-            <div className="pt-3 border-t border-white/10">
-              <p className="text-gray-400 mb-2">You can generate this folder structure using this script:</p>
-              <a 
-                href="https://github.com/arianizadi/mmseg-arian/blob/main/tools/run_all_models_inference.py"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 hover:text-blue-300 underline font-mono break-all"
-              >
-                run_all_models_inference.py
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  const basePath = `/inference_comparison/${scene.id}`;
-  const inputSrc = `${basePath}/${scene.inputImage}`;
-
-  // Build unified model list: Ground Truth + all models
-  const allModels: ModelOption[] = [
-    { name: "Ground Truth", filename: scene.groundTruth, isGroundTruth: true },
-    ...scene.models.map((m) => ({ name: m.name, filename: m.filename })),
-  ];
-
-  const getMaskSrc = (index: number) =>
-    `${basePath}/${allModels[index].filename}`;
-
-  // Look up current scene stats
-  const currentSceneStats = sceneStats.get(scene.id);
-  const currentModelName = allModels[selectedIndex]?.name;
-  const currentStats = currentModelName && !allModels[selectedIndex]?.isGroundTruth
-    ? currentSceneStats?.find((s) => s.modelName === currentModelName)
-    : undefined;
+      .catch((error) => {
+        fetchedRef.current.delete(scene.id);
+        setStatsRequestErrors((prev) => {
+          const next = new Map(prev);
+          next.set(scene.id, error instanceof Error ? error.message : String(error));
+          return next;
+        });
+      });
+  }, [scene, statsRetryNonce]);
 
   const handleHover = useCallback(
     (classIndex: number | null, x: number, y: number) => {
@@ -176,10 +140,94 @@ export default function Viewer({ scenes, config }: ViewerProps) {
     });
   }, []);
 
+  if (!scene) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
+        <div className="glass-panel p-10 rounded-3xl max-w-2xl border-dashed border-2 border-white/10">
+          {setupError ? (
+            <AlertTriangle className="text-red-400 mx-auto mb-6" size={64} />
+          ) : (
+            <Activity className="text-blue-400 mx-auto mb-6 opacity-50" size={64} />
+          )}
+          <h2 className="text-2xl font-bold text-white mb-4">
+            {setupError ? "Inference Data Is Invalid" : "No Inference Data Found"}
+          </h2>
+          {setupError && (
+            <p className="text-left text-red-200 bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-6 font-mono text-sm break-words">
+              {setupError}
+            </p>
+          )}
+          <p className="text-gray-400 mb-6 leading-relaxed">
+            Add a validated config and scene directories under:
+            <code className="bg-white/5 px-2 py-1 rounded text-blue-300 select-all block mt-3 font-mono text-sm">
+              public/inference_comparison/
+            </code>
+          </p>
+          <div className="text-left bg-black/40 p-5 rounded-xl border border-white/5 text-sm">
+            <p className="text-gray-300 font-semibold mb-2">Minimal artifact layout:</p>
+            <pre className="text-gray-500 font-mono leading-tight overflow-x-auto">
+              public/inference_comparison/<br />
+              ├── config.json<br />
+              └── scene_id/<br />
+                  ├── input.jpg<br />
+                  ├── gt.png<br />
+                  └── model.png
+            </pre>
+            <p className="text-gray-500 mt-4">
+              See README.md for the mask encoding, config schema, validation rules, and optional provenance metadata.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const artifactSrc = (filename: string) =>
+    `/api/artifact?sceneId=${encodeURIComponent(scene.id)}&filename=${encodeURIComponent(filename)}`;
+  const inputSrc = artifactSrc(scene.inputImage);
+  const allModels: (ModelOption & { provenance?: ArtifactProvenance })[] = [
+    { name: "Ground Truth", filename: scene.groundTruth, isGroundTruth: true },
+    ...scene.models.map((model) => ({
+      name: model.name,
+      filename: model.filename,
+      provenance: model.provenance,
+    })),
+  ];
+  const clampModelIndex = (index: number) =>
+    Math.min(Math.max(index, 0), allModels.length - 1);
+  const safeSelectedIndex = clampModelIndex(selectedIndex);
+  const safeLeftIndex = clampModelIndex(leftIndex);
+  const safeRightIndex = clampModelIndex(rightIndex);
+  const getMaskSrc = (index: number) =>
+    artifactSrc(allModels[clampModelIndex(index)].filename);
+  const currentSceneStats = sceneStats.get(scene.id);
+  const currentModel = allModels[safeSelectedIndex];
+  const currentStats = !currentModel.isGroundTruth
+    ? currentSceneStats?.find((stats) => stats.modelName === currentModel.name)
+    : undefined;
+  const statsLoading =
+    !currentSceneStats && !statsRequestErrors.has(scene.id);
+  const statsErrors = sceneStatsErrors.get(scene.id) ?? [];
+  const statsRequestError = statsRequestErrors.get(scene.id);
+  const provenanceEntries = Object.entries({
+    ...scene.provenance,
+    ...currentModel.provenance,
+  }).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+
   const goToScene = (idx: number) => {
     if (idx >= 0 && idx < scenes.length) {
       setSceneIndex(idx);
     }
+  };
+
+  const retryStats = () => {
+    fetchedRef.current.delete(scene.id);
+    setStatsRequestErrors((prev) => {
+      const next = new Map(prev);
+      next.delete(scene.id);
+      return next;
+    });
+    setStatsRetryNonce((value) => value + 1);
   };
 
   return (
@@ -188,10 +236,10 @@ export default function Viewer({ scenes, config }: ViewerProps) {
       <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 glass-panel p-5 rounded-2xl">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-400 via-cyan-400 to-purple-500 bg-clip-text text-transparent mb-1">
-            RailSem19 Inference Viewer
+            {config.title || config.dataset || "Semantic Segmentation Analysis"}
           </h1>
           <p className="text-sm text-gray-400">
-            {scenes.length} scene{scenes.length !== 1 ? "s" : ""} · {scene.models.length} model{scene.models.length !== 1 ? "s" : ""} · {config.labels.length} classes
+            {scene.title ? `${scene.title} · ` : ""}{scenes.length} scene{scenes.length !== 1 ? "s" : ""} · {scene.models.length} model{scene.models.length !== 1 ? "s" : ""} · {config.labels.length} classes
           </p>
         </div>
 
@@ -262,13 +310,53 @@ export default function Viewer({ scenes, config }: ViewerProps) {
         models={allModels}
         mode={mode}
         onModeChange={setMode}
-        selectedIndex={selectedIndex}
+        selectedIndex={safeSelectedIndex}
         onSelectModel={setSelectedIndex}
-        leftIndex={leftIndex}
-        rightIndex={rightIndex}
+        leftIndex={safeLeftIndex}
+        rightIndex={safeRightIndex}
         onSelectLeft={setLeftIndex}
         onSelectRight={setRightIndex}
       />
+
+      {(statsRequestError || statsErrors.length > 0) && (
+        <div className="glass-panel border-red-500/30 bg-red-500/5 rounded-2xl p-4 text-sm">
+          <p className="font-semibold text-red-300 flex items-center gap-2 mb-2">
+            <AlertTriangle size={17} /> Artifact validation errors
+          </p>
+          {statsRequestError && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-red-200">{statsRequestError}</p>
+              <button
+                onClick={retryStats}
+                className="rounded-lg border border-red-400/30 px-3 py-1 text-red-100 hover:bg-red-500/10"
+              >
+                Retry metrics
+              </button>
+            </div>
+          )}
+          {statsErrors.map((error) => (
+            <p key={error.modelName} className="text-red-200 break-words">
+              <span className="font-semibold">{error.modelName}:</span> {error.message}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {provenanceEntries.length > 0 && (
+        <details className="glass-panel rounded-2xl px-5 py-4 text-sm">
+          <summary className="cursor-pointer font-semibold text-gray-200">
+            Artifact provenance for {currentModel.name}
+          </summary>
+          <dl className="grid grid-cols-1 md:grid-cols-[8rem_1fr] gap-x-4 gap-y-2 mt-4">
+            {provenanceEntries.map(([key, value]) => (
+              <div key={key} className="contents">
+                <dt className="text-gray-500 capitalize">{key}</dt>
+                <dd className="text-gray-300 font-mono break-all">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -278,7 +366,7 @@ export default function Viewer({ scenes, config }: ViewerProps) {
             <div className="glass-panel p-2 rounded-2xl overflow-hidden shadow-2xl border border-white/5">
               <MaskCanvas
                 inputImageSrc={inputSrc}
-                maskSrc={getMaskSrc(selectedIndex)}
+                maskSrc={getMaskSrc(safeSelectedIndex)}
                 labels={config.labels}
                 hiddenClasses={hiddenClasses}
                 opacity={opacity}
@@ -291,12 +379,12 @@ export default function Viewer({ scenes, config }: ViewerProps) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <div className="text-center text-sm font-semibold text-gray-300">
-                  {allModels[leftIndex].name}
+                  {allModels[safeLeftIndex].name}
                 </div>
                 <div className="glass-panel p-2 rounded-2xl overflow-hidden shadow-2xl border border-white/5">
                   <MaskCanvas
                     inputImageSrc={inputSrc}
-                    maskSrc={getMaskSrc(leftIndex)}
+                    maskSrc={getMaskSrc(safeLeftIndex)}
                     labels={config.labels}
                     hiddenClasses={hiddenClasses}
                     opacity={opacity}
@@ -306,12 +394,12 @@ export default function Viewer({ scenes, config }: ViewerProps) {
               </div>
               <div className="space-y-2">
                 <div className="text-center text-sm font-semibold text-gray-300">
-                  {allModels[rightIndex].name}
+                  {allModels[safeRightIndex].name}
                 </div>
                 <div className="glass-panel p-2 rounded-2xl overflow-hidden shadow-2xl border border-white/5">
                   <MaskCanvas
                     inputImageSrc={inputSrc}
-                    maskSrc={getMaskSrc(rightIndex)}
+                    maskSrc={getMaskSrc(safeRightIndex)}
                     labels={config.labels}
                     hiddenClasses={hiddenClasses}
                     opacity={opacity}
@@ -341,9 +429,9 @@ export default function Viewer({ scenes, config }: ViewerProps) {
               <div className="glass-panel p-2 rounded-2xl overflow-hidden shadow-2xl border border-white/5">
                 <DiffCanvas
                   inputImageSrc={inputSrc}
-                  maskSrcA={getMaskSrc(leftIndex)}
-                  maskSrcB={getMaskSrc(rightIndex)}
-                  gtMaskSrc={`${basePath}/${scene.groundTruth}`}
+                  maskSrcA={getMaskSrc(safeLeftIndex)}
+                  maskSrcB={getMaskSrc(safeRightIndex)}
+                  gtMaskSrc={artifactSrc(scene.groundTruth)}
                   numClasses={config.labels.length}
                   hiddenClasses={hiddenClasses}
                   opacity={opacity}
@@ -355,13 +443,13 @@ export default function Viewer({ scenes, config }: ViewerProps) {
 
           {/* Stats Cards */}
           {mode === "single" && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
                 <div className="bg-blue-500/20 p-3 rounded-xl">
                   <Activity className="text-blue-400" size={24} />
                 </div>
                 <div>
-                  <p className="text-sm text-gray-400 mb-0.5">Mean IoU (mIoU)</p>
+                  <p className="text-sm text-gray-400 mb-0.5">Scene mIoU (GT-present)</p>
                   <p className="text-2xl font-bold text-white tabular-nums">
                     {statsLoading ? (
                       <Loader2 className="animate-spin text-gray-500 inline" size={20} />
@@ -390,6 +478,28 @@ export default function Viewer({ scenes, config }: ViewerProps) {
                   </p>
                 </div>
               </div>
+              <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+                <div className="bg-purple-500/20 p-3 rounded-xl">
+                  <Activity className="text-purple-400" size={24} />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-400 mb-0.5">Union mIoU</p>
+                  <p className="text-2xl font-bold text-white tabular-nums">
+                    {statsLoading ? (
+                      <Loader2 className="animate-spin text-gray-500 inline" size={20} />
+                    ) : currentStats ? (
+                      `${currentStats.unionMIoU.toFixed(2)}%`
+                    ) : (
+                      <span className="text-gray-500 text-base">—</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          {mode === "single" && currentStats && currentStats.predictionOnlyClasses.length > 0 && (
+            <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4 text-sm text-amber-100">
+              Predicted classes absent from this frame&apos;s ground truth: {currentStats.predictionOnlyClasses.map((classStats) => `${classStats.readable} (${classStats.predPixels.toLocaleString()} px)`).join(", ")}
             </div>
           )}
         </div>
@@ -416,8 +526,8 @@ export default function Viewer({ scenes, config }: ViewerProps) {
       <DiffTooltip
         info={diffHoverInfo}
         labels={config.labels}
-        leftName={allModels[leftIndex]?.name ?? "Left"}
-        rightName={allModels[rightIndex]?.name ?? "Right"}
+        leftName={allModels[safeLeftIndex].name}
+        rightName={allModels[safeRightIndex].name}
         x={diffHoverX}
         y={diffHoverY}
         visible={diffHoverVisible}
@@ -458,8 +568,8 @@ export default function Viewer({ scenes, config }: ViewerProps) {
                 <p className="text-gray-300 font-semibold mb-3">Expected directory structure:</p>
                 <pre className="text-gray-400 font-mono text-sm leading-relaxed overflow-x-auto">
                   public/inference_comparison/<br />
-                  ├── rs19-config.json<br />
-                  └── rs00033/  <span className="text-gray-600 ml-4"># Scene directory</span><br />
+                  ├── config.json<br />
+                  └── scene_id/ <span className="text-gray-600 ml-4"># Scene directory</span><br />
                       ├── input.jpg <span className="text-gray-600 ml-4"># Original RGB image</span><br />
                       ├── gt.png    <span className="text-gray-600 ml-4"># Ground truth mask</span><br />
                       ├── model1.png<span className="text-gray-600 ml-4"># Auto-discovered</span><br />
@@ -467,25 +577,8 @@ export default function Viewer({ scenes, config }: ViewerProps) {
                 </pre>
               </div>
 
-              <div className="pt-6 border-t border-white/10">
-                <p className="text-gray-400 mb-4 font-medium flex items-center gap-2">
-                  <Activity size={18} className="text-blue-400" />
-                  Automation Script
-                </p>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-blue-500/5 border border-blue-500/10">
-                  <p className="text-sm text-gray-300">
-                    Use this script to automatically generate the required layout from MMSegmentation outputs.
-                  </p>
-                  <a 
-                    href="https://github.com/arianizadi/mmseg-arian/blob/main/tools/run_all_models_inference.py"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-sm font-bold shadow-lg shadow-blue-500/20 flex-shrink-0"
-                  >
-                    Get Script
-                    <ExternalLink size={14} />
-                  </a>
-                </div>
+              <div className="pt-6 border-t border-white/10 text-sm text-gray-400">
+                Masks must be exact non-interlaced 8-bit grayscale class-index PNGs; RGB, palette, interlaced, and 16-bit masks are rejected. Ground truth may also use the configured ignore index. See README.md for the complete schema and optional <code className="text-blue-300">scene.json</code> provenance.
               </div>
             </div>
           </div>

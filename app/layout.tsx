@@ -9,9 +9,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "RailSem19 Inference Viewer — Semantic Segmentation Analysis",
+  title: "Inference Checker — Semantic Segmentation Analysis",
   description:
-    "Compare semantic segmentation model predictions on the RailSem19 railway scene dataset. View overlays, side-by-side comparisons, and pixel-level diffs across multiple models.",
+    "Compare semantic segmentation predictions with overlays, side-by-side views, pixel-level diffs, and per-class metrics.",
 };
 
 export default function RootLayout({
