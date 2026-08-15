@@ -51,6 +51,13 @@ export interface SceneData {
   provenance?: ArtifactProvenance;
 }
 
+export interface BundleIndex {
+  root: string;
+  config: SegmentationConfig;
+  scenes: SceneData[];
+  scenesById: ReadonlyMap<string, SceneData>;
+}
+
 export const BUNDLE_ROOT_ENV = "INFERENCE_CHECKER_BUNDLE_ROOT";
 export const INFERENCE_DIR = path.join(
   process.cwd(),
@@ -59,6 +66,16 @@ export const INFERENCE_DIR = path.join(
 );
 
 const CONFIG_FILENAMES = ["config.json", "rs19-config.json"] as const;
+export const BUNDLE_LIMITS = {
+  configBytes: 1024 * 1024,
+  sceneManifestBytes: 2 * 1024 * 1024,
+  allSceneManifestBytes: 64 * 1024 * 1024,
+  scenes: 10_000,
+  filesPerScene: 256,
+  allSceneFiles: 100_000,
+} as const;
+const MAX_CACHED_BUNDLE_ROOTS = 4;
+const bundleIndexCache = new Map<string, BundleIndex>();
 const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const INPUT_FILENAME = /^input\.(?:jpe?g|png|webp)$/i;
 const PROVENANCE_FIELDS = [
@@ -79,6 +96,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function describeFile(filePath: string): string {
   return path.relative(process.cwd(), filePath) || path.basename(filePath);
+}
+
+function readJsonDocument(filePath: string, maxBytes: number): unknown {
+  const size = fs.statSync(filePath).size;
+  if (size > maxBytes) {
+    throw new Error(
+      `${describeFile(filePath)} is ${size.toLocaleString()} bytes; limit is ${maxBytes.toLocaleString()} bytes`,
+    );
+  }
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 export function resolveInferenceRoot(
@@ -164,6 +191,16 @@ function validateProvenance(
     result[key] = item;
   }
   return result;
+}
+
+function compactProvenance(
+  value: ArtifactProvenance,
+): ArtifactProvenance | undefined {
+  const result: ArtifactProvenance = {};
+  for (const key of PROVENANCE_FIELDS) {
+    if (value[key] !== undefined) result[key] = value[key];
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function validateConfig(value: unknown): SegmentationConfig {
@@ -286,7 +323,7 @@ export function getConfig(root = resolveInferenceRoot()): SegmentationConfig {
   const configPath = resolveArtifactPath(root, configName);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    parsed = readJsonDocument(configPath, BUNDLE_LIMITS.configBytes);
   } catch (error) {
     throw new Error(
       `Could not parse ${describeFile(configPath)}: ${error instanceof Error ? error.message : String(error)}`,
@@ -307,7 +344,7 @@ function readSceneManifest(sceneDir: string): SceneManifest | undefined {
 
   let value: unknown;
   try {
-    value = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    value = readJsonDocument(manifestPath, BUNDLE_LIMITS.sceneManifestBytes);
   } catch (error) {
     throw new Error(
       `Could not parse ${describeFile(manifestPath)}: ${error instanceof Error ? error.message : String(error)}`,
@@ -413,34 +450,71 @@ export function getAllScenes(root = resolveInferenceRoot()): SceneData[] {
     throw new Error(`${describeFile(root)} must be a real directory, not a symbolic link`);
   }
 
-  const scenes: SceneData[] = [];
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) {
-      throw new Error(`Symbolic links are not allowed in bundle roots: ${entry.name}`);
-    }
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    assertSafePathComponent(entry.name, "scene directory name");
+  const rootEntries = fs.readdirSync(root, { withFileTypes: true });
+  if (rootEntries.length > BUNDLE_LIMITS.scenes + CONFIG_FILENAMES.length) {
+    throw new Error(`Bundle contains too many root entries; limit is ${BUNDLE_LIMITS.scenes}`);
+  }
 
-    const sceneDir = resolveArtifactPath(root, entry.name);
-    const directoryStats = fs.lstatSync(sceneDir);
-    if (directoryStats.isSymbolicLink()) {
-      throw new Error(`Scene directories may not be symbolic links: ${entry.name}`);
-    }
+  const scenes: SceneData[] = [];
+  let allSceneFiles = 0;
+  let allSceneManifestBytes = 0;
+  for (const entry of rootEntries) {
+    // Portable archives and staging workflows commonly add unrelated siblings.
+    // Never follow a root symlink, and only validate a real directory as a scene
+    // after its direct entries contain both canonical scene markers.
+    if (
+      entry.isSymbolicLink() ||
+      !entry.isDirectory() ||
+      entry.name.startsWith(".") ||
+      entry.name === "__MACOSX"
+    ) continue;
+
+    const sceneDir = path.join(root, entry.name);
 
     const files = fs
       .readdirSync(sceneDir, { withFileTypes: true })
       .filter((file) => !file.name.startsWith("."));
+    const inputEntries = files.filter((file) => INPUT_FILENAME.test(file.name));
+    const groundTruthEntry = files.find((file) => file.name === "gt.png");
+
+    // A directory without the canonical pair is not a scene. This allows zip
+    // metadata and incomplete staging siblings without weakening validation of
+    // any directory that presents itself as an actual scene.
+    if (inputEntries.length === 0 || !groundTruthEntry) continue;
+
+    assertSafePathComponent(entry.name, "scene directory name");
+    if (files.length > BUNDLE_LIMITS.filesPerScene) {
+      throw new Error(
+        `Scene ${entry.name} contains ${files.length} files; limit is ${BUNDLE_LIMITS.filesPerScene}`,
+      );
+    }
+    allSceneFiles += files.length;
+    if (allSceneFiles > BUNDLE_LIMITS.allSceneFiles) {
+      throw new Error(
+        `Bundle contains more than ${BUNDLE_LIMITS.allSceneFiles.toLocaleString()} scene files`,
+      );
+    }
     const linkedFile = files.find((file) => file.isSymbolicLink());
     if (linkedFile) {
       throw new Error(
         `Symbolic links are not allowed in scene ${entry.name}: ${linkedFile.name}`,
       );
     }
+    const manifestEntry = files.find((file) => file.name === "scene.json");
+    if (manifestEntry) {
+      allSceneManifestBytes += fs.statSync(path.join(sceneDir, manifestEntry.name)).size;
+      if (allSceneManifestBytes > BUNDLE_LIMITS.allSceneManifestBytes) {
+        throw new Error(
+          `Bundle scene metadata exceeds ${BUNDLE_LIMITS.allSceneManifestBytes.toLocaleString()} total bytes`,
+        );
+      }
+    }
     const inputFiles = files.filter((file) => file.isFile() && INPUT_FILENAME.test(file.name));
     const groundTruth = files.find((file) => file.isFile() && file.name === "gt.png");
 
-    // Incomplete staging directories are ignored; ambiguous artifacts fail closed.
-    if (inputFiles.length === 0 || !groundTruth) continue;
+    if (!groundTruth) {
+      throw new Error(`Scene ${entry.name} ground truth must be a regular file`);
+    }
     if (inputFiles.length !== 1) {
       throw new Error(`Scene ${entry.name} must contain exactly one input image`);
     }
@@ -459,19 +533,7 @@ export function getAllScenes(root = resolveInferenceRoot()): SceneData[] {
       return {
         name: metadata?.displayName || path.basename(file.name, path.extname(file.name)),
         filename: file.name,
-        provenance: metadata
-          ? {
-              source: metadata.source,
-              split: metadata.split,
-              frame: metadata.frame,
-              model: metadata.model,
-              checkpoint: metadata.checkpoint,
-              config: metadata.config,
-              commit: metadata.commit,
-              protocol: metadata.protocol,
-              notes: metadata.notes,
-            }
-          : undefined,
+        provenance: metadata ? compactProvenance(metadata) : undefined,
       };
     });
 
@@ -496,6 +558,47 @@ export function getAllScenes(root = resolveInferenceRoot()): SceneData[] {
 
   scenes.sort((a, b) => a.id.localeCompare(b.id));
   return scenes;
+}
+
+/**
+ * Build a validated, immutable process-lifetime bundle index.
+ *
+ * Portable bundles are treated as snapshots. Restart the viewer (or explicitly
+ * clear this cache in a test/tool) after changing files on disk. Keeping a small
+ * bounded root cache makes scene lookup O(1) without watching thousands of files.
+ */
+export function getBundleIndex(root = resolveInferenceRoot()): BundleIndex {
+  const resolvedRoot = validateBundleRoot(root);
+  const cached = bundleIndexCache.get(resolvedRoot);
+  if (cached) {
+    bundleIndexCache.delete(resolvedRoot);
+    bundleIndexCache.set(resolvedRoot, cached);
+    return cached;
+  }
+
+  const config = getConfig(resolvedRoot);
+  const scenes = getAllScenes(resolvedRoot);
+  const index: BundleIndex = {
+    root: resolvedRoot,
+    config,
+    scenes,
+    scenesById: new Map(scenes.map((scene) => [scene.id, scene])),
+  };
+  bundleIndexCache.set(resolvedRoot, index);
+  while (bundleIndexCache.size > MAX_CACHED_BUNDLE_ROOTS) {
+    const oldest = bundleIndexCache.keys().next().value;
+    if (oldest === undefined) break;
+    bundleIndexCache.delete(oldest);
+  }
+  return index;
+}
+
+export function clearBundleIndexCache(): void {
+  bundleIndexCache.clear();
+}
+
+export function bundleIndexCacheEntries(): number {
+  return bundleIndexCache.size;
 }
 
 export function getSceneImagePath(

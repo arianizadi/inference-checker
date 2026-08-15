@@ -49,7 +49,8 @@ export default function DiffCanvas({
   const masksRef = useRef<MaskBundle | null>(null);
   const [baseImage, setBaseImage] = useState<{ src: string; width: number; height: number } | null>(null);
   const [maskBundle, setMaskBundle] = useState<MaskBundle | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [baseLoadError, setBaseLoadError] = useState<string | null>(null);
+  const [maskLoadError, setMaskLoadError] = useState<string | null>(null);
   const maskKey = `${maskSrcA}\n${maskSrcB}\n${gtMaskSrc}`;
   const currentBase = baseImage?.src === inputImageSrc ? baseImage : null;
   const currentMasks = maskBundle?.key === maskKey ? maskBundle : null;
@@ -102,9 +103,10 @@ export default function DiffCanvas({
       context.drawImage(image, 0, 0);
       dimensionsRef.current = { width: image.width, height: image.height };
       setBaseImage({ src: inputImageSrc, width: image.width, height: image.height });
+      setBaseLoadError(null);
     };
     image.onerror = () => {
-      if (!cancelled) setLoadError(`Could not load input image ${inputImageSrc}`);
+      if (!cancelled) setBaseLoadError(`Could not load input image ${inputImageSrc}`);
     };
     image.src = inputImageSrc;
     return () => {
@@ -114,14 +116,17 @@ export default function DiffCanvas({
 
   useEffect(() => {
     let cancelled = false;
+    masksRef.current = null;
     Promise.all([readMask(maskSrcA), readMask(maskSrcB), readMask(gtMaskSrc)])
       .then(([a, b, gt]) => {
         if (cancelled) return;
         setMaskBundle({ key: maskKey, a, b, gt });
-        setLoadError(null);
+        setMaskLoadError(null);
       })
       .catch((error) => {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
+        if (!cancelled) {
+          setMaskLoadError(error instanceof Error ? error.message : String(error));
+        }
       });
     return () => {
       cancelled = true;
@@ -214,9 +219,9 @@ export default function DiffCanvas({
         className="absolute inset-0 w-full h-full object-contain transition-opacity duration-150"
         style={{ opacity }}
       />
-      {(loadError || dimensionError) && (
+      {(baseLoadError || maskLoadError || dimensionError) && (
         <div className="absolute inset-x-4 bottom-4 rounded-lg border border-red-500/40 bg-black/90 p-3 text-sm text-red-200">
-          {loadError || dimensionError}
+          {baseLoadError || maskLoadError || dimensionError}
         </div>
       )}
     </div>

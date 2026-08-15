@@ -23,6 +23,8 @@ INFERENCE_CHECKER_BUNDLE_ROOT=/path/to/bundle bun run dev
 
 Relative environment-variable paths resolve from the repository directory. The default remains `public/inference_comparison/`. Bundle roots and artifacts may not be symbolic links, and artifact requests are restricted to validated files inside the selected root.
 
+Bundles are indexed once per server process and treated as immutable snapshots. Restart `bun run inspect` after changing bundle contents. The index is bounded to four roots; lazy per-scene metric results are held in a 16-entry, 8 MiB LRU cache. Configs, per-file and aggregate manifests, scene/file counts, compressed mask bytes, decoded mask dimensions/pixels, and total model-pixel comparisons per request have explicit safety limits so malformed or extreme bundles fail before unbounded work.
+
 ## Quick start
 
 Requirements: [Bun](https://bun.sh/) and a modern browser.
@@ -64,8 +66,8 @@ public/inference_comparison/
 Each complete scene must contain:
 
 - Exactly one `input.jpg`, `input.jpeg`, `input.png`, or `input.webp` RGB image.
-- `gt.png`, a PNG whose red channel stores a class index per pixel.
-- Zero or more model PNGs using the same encoding. Every PNG other than `gt.png` is treated as a prediction.
+- `gt.png`, an exact 8-bit grayscale PNG whose sample stores a class index per pixel.
+- Zero or more model PNGs using the same encoding. Every PNG other than `gt.png` and the selected `input.*` image is treated as a prediction.
 - Matching width and height for ground truth and every prediction. The diff view also requires the input image to have the same dimensions.
 
 Class indices are positions in `config.json.labels`: the first label is `0`, the second is `1`, and so on. Ground truth may contain `ignoreIndex` (default `255`). A prediction may contain the ignore index only where ground truth is ignored. Other unknown IDs are rejected and shown in the viewer instead of being silently excluded from metrics.
@@ -156,7 +158,7 @@ Repeat with `--name city-to-rail` and the transfer run's exact resolved config/c
 
 ## Current limitations
 
-- Masks are decoded from the PNG red channel, so palette or grayscale PNGs must preserve the intended numeric index in that channel.
+- Masks must be exact 8-bit grayscale class-index PNGs. RGB, palette, and 16-bit PNGs are rejected rather than interpreted heuristically.
 - Metrics are computed lazily for the selected scene in the Next.js server process and are not persisted.
 - The viewer validates mask pairs when metrics load; it does not replace a full dataset-integrity audit.
 - The repository does not bundle a training framework. Exporters should write this explicit contract and include their exact taxonomy in `config.json`.

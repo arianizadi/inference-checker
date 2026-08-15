@@ -1,6 +1,7 @@
 import fs from "fs";
 import { NextRequest, NextResponse } from "next/server";
-import { getAllScenes, getSceneImagePath } from "../../../lib/data";
+import { getBundleIndex, getSceneImagePath } from "../../../lib/data";
+import { MASK_LIMITS } from "../../../lib/stats";
 
 const CONTENT_TYPES: Record<string, string> = {
   jpg: "image/jpeg",
@@ -8,6 +9,22 @@ const CONTENT_TYPES: Record<string, string> = {
   png: "image/png",
   webp: "image/webp",
 };
+
+export const ARTIFACT_LIMITS = {
+  imageBytes: 128 * 1024 * 1024,
+  pngBytes: MASK_LIMITS.compressedBytes,
+} as const;
+
+export function validateArtifactSize(filename: string, bytes: number): void {
+  const limit = filename.toLowerCase().endsWith(".png")
+    ? ARTIFACT_LIMITS.pngBytes
+    : ARTIFACT_LIMITS.imageBytes;
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > limit) {
+    throw new Error(
+      `Artifact ${filename} is ${bytes.toLocaleString()} bytes; limit is ${limit.toLocaleString()} bytes`,
+    );
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -25,7 +42,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const scene = getAllScenes().find((candidate) => candidate.id === sceneId);
+    const bundle = getBundleIndex();
+    const scene = bundle.scenesById.get(sceneId);
     if (!scene) {
       return NextResponse.json({ error: "Scene not found" }, { status: 404 });
     }
@@ -43,7 +61,10 @@ export async function GET(request: NextRequest) {
     if (!contentType) {
       return NextResponse.json({ error: "Unsupported artifact type" }, { status: 415 });
     }
-    const bytes = fs.readFileSync(getSceneImagePath(scene.id, filename));
+    const artifactPath = getSceneImagePath(scene.id, filename, bundle.root);
+    validateArtifactSize(filename, fs.statSync(artifactPath).size);
+    const bytes = fs.readFileSync(artifactPath);
+    validateArtifactSize(filename, bytes.length);
     return new NextResponse(new Uint8Array(bytes), {
       headers: {
         "Content-Type": contentType,

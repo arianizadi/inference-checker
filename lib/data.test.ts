@@ -3,6 +3,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import {
+  BUNDLE_LIMITS,
+  bundleIndexCacheEntries,
+  clearBundleIndexCache,
+  getBundleIndex,
   getAllScenes,
   getConfig,
   resolveInferenceRoot,
@@ -41,6 +45,7 @@ function validConfig(title = "Test Dataset") {
 }
 
 afterEach(() => {
+  clearBundleIndexCache();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -118,11 +123,72 @@ describe("artifact loading", () => {
     expect(getConfig(root).title).toBe("Canonical");
   });
 
+  test("bounds metadata before parsing", () => {
+    const root = temporaryDirectory();
+    fs.writeFileSync(
+      path.join(root, "config.json"),
+      `{"padding":"${"x".repeat(BUNDLE_LIMITS.configBytes)}"}`,
+    );
+    expect(() => getConfig(root)).toThrow("limit is");
+
+    fs.rmSync(path.join(root, "config.json"));
+    const scene = path.join(root, "scene-oversized");
+    fs.mkdirSync(scene);
+    fs.writeFileSync(path.join(scene, "input.jpg"), "fixture");
+    fs.writeFileSync(path.join(scene, "gt.png"), "fixture");
+    fs.writeFileSync(
+      path.join(scene, "scene.json"),
+      `{"padding":"${"x".repeat(BUNDLE_LIMITS.sceneManifestBytes)}"}`,
+    );
+    expect(() => getAllScenes(root)).toThrow("limit is");
+  });
+
+  test("uses a bounded process-lifetime bundle index with explicit refresh", () => {
+    const roots: string[] = [];
+    for (let index = 0; index < 5; index++) {
+      const root = temporaryDirectory();
+      roots.push(root);
+      fs.writeFileSync(path.join(root, "config.json"), JSON.stringify(validConfig()));
+      const scene = path.join(root, `scene-${index}`);
+      fs.mkdirSync(scene);
+      fs.writeFileSync(path.join(scene, "input.jpg"), "fixture");
+      fs.writeFileSync(path.join(scene, "gt.png"), "fixture");
+      getBundleIndex(root);
+    }
+    expect(bundleIndexCacheEntries()).toBe(4);
+    const first = getBundleIndex(roots[4]);
+    expect(getBundleIndex(roots[4])).toBe(first);
+    clearBundleIndexCache();
+    expect(getBundleIndex(roots[4])).not.toBe(first);
+  });
+
   test("rejects traversal and absolute path components", () => {
     const root = temporaryDirectory();
     expect(() => resolveArtifactPath(root, "../secret.png")).toThrow("safe filename");
     expect(() => resolveArtifactPath(root, "/tmp/secret.png")).toThrow("safe filename");
     expect(() => resolveArtifactPath(root, "scene", "..")).toThrow("safe filename");
+  });
+
+  test("ignores portable-archive and staging siblings but validates real scenes", () => {
+    const root = temporaryDirectory();
+    const archiveMetadata = path.join(root, "__MACOSX");
+    fs.mkdirSync(archiveMetadata);
+    fs.writeFileSync(path.join(archiveMetadata, "junk"), "fixture");
+
+    const stagingTarget = temporaryDirectory();
+    fs.symlinkSync(stagingTarget, path.join(root, "staging-link"));
+
+    const validScene = path.join(root, "scene-01");
+    fs.mkdirSync(validScene);
+    fs.writeFileSync(path.join(validScene, "input.jpg"), "fixture");
+    fs.writeFileSync(path.join(validScene, "gt.png"), "fixture");
+    expect(getAllScenes(root).map((scene) => scene.id)).toEqual(["scene-01"]);
+
+    const linkedScene = path.join(root, "scene-linked");
+    fs.mkdirSync(linkedScene);
+    fs.writeFileSync(path.join(linkedScene, "input.jpg"), "fixture");
+    fs.symlinkSync(path.join(validScene, "gt.png"), path.join(linkedScene, "gt.png"));
+    expect(() => getAllScenes(root)).toThrow("Symbolic links are not allowed");
   });
 
   test("loads optional scene and model provenance", () => {
@@ -157,6 +223,11 @@ describe("artifact loading", () => {
       filename: "prediction.png",
       provenance: { checkpoint: "sha256:abc", commit: "deadbeef" },
     });
+    expect(Object.hasOwn(scenes[0].models[0].provenance ?? {}, "source")).toBe(false);
+    expect({
+      ...scenes[0].provenance,
+      ...scenes[0].models[0].provenance,
+    }).toMatchObject({ source: "ExampleSet", checkpoint: "sha256:abc" });
   });
 
   test("fails when metadata references a missing model artifact", () => {

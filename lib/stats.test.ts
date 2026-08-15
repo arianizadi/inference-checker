@@ -4,7 +4,12 @@ import os from "os";
 import path from "path";
 import { PNG } from "pngjs";
 import type { SegmentationConfig } from "./data";
-import { computeStatsFromMasks, readMaskIndices, type IndexMask } from "./stats";
+import {
+  computeStatsFromMasks,
+  MASK_LIMITS,
+  readMaskIndices,
+  type IndexMask,
+} from "./stats";
 
 const temporaryFiles: string[] = [];
 
@@ -125,5 +130,31 @@ describe("readMaskIndices", () => {
     );
 
     expect(() => readMaskIndices(file)).toThrow("must be 8-bit grayscale");
+  });
+
+  test("rejects malformed and oversized dimensions before PNG decompression", () => {
+    const malformed = path.join(
+      os.tmpdir(),
+      `inference-checker-malformed-mask-${process.pid}.png`,
+    );
+    temporaryFiles.push(malformed);
+    fs.writeFileSync(malformed, "not a png");
+    expect(() => readMaskIndices(malformed)).toThrow("no valid PNG signature");
+
+    const oversized = path.join(
+      os.tmpdir(),
+      `inference-checker-oversized-mask-${process.pid}.png`,
+    );
+    temporaryFiles.push(oversized);
+    const header = Buffer.alloc(29);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);
+    header.writeUInt32BE(13, 8);
+    header.write("IHDR", 12, "ascii");
+    header.writeUInt32BE(MASK_LIMITS.dimension + 1, 16);
+    header.writeUInt32BE(1, 20);
+    header[24] = 8;
+    header[25] = 0;
+    fs.writeFileSync(oversized, header);
+    expect(() => readMaskIndices(oversized)).toThrow("dimensions");
   });
 });

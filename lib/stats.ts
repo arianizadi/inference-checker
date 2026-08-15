@@ -39,20 +39,71 @@ export interface IndexMask {
   height: number;
 }
 
+export const MASK_LIMITS = {
+  compressedBytes: 32 * 1024 * 1024,
+  pixels: 16 * 1024 * 1024,
+  dimension: 16_384,
+} as const;
+
+const PNG_SIGNATURE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+function validatePngHeader(data: Buffer, filePath: string): { width: number; height: number } {
+  if (data.length < 29 || !PNG_SIGNATURE.every((byte, index) => data[index] === byte)) {
+    throw new Error(`Index-mask file ${filePath} has no valid PNG signature/IHDR header`);
+  }
+  if (data.readUInt32BE(8) !== 13 || data.toString("ascii", 12, 16) !== "IHDR") {
+    throw new Error(`Index-mask file ${filePath} must begin with a standard PNG IHDR chunk`);
+  }
+  const width = data.readUInt32BE(16);
+  const height = data.readUInt32BE(20);
+  const depth = data[24];
+  const colorType = data[25];
+  if (depth !== 8 || colorType !== 0) {
+    throw new Error(
+      `Index-mask PNG ${filePath} must be 8-bit grayscale (PNG color type 0); ` +
+        `received color type ${colorType}, bit depth ${depth}`,
+    );
+  }
+  if (
+    width === 0 ||
+    height === 0 ||
+    width > MASK_LIMITS.dimension ||
+    height > MASK_LIMITS.dimension ||
+    width * height > MASK_LIMITS.pixels
+  ) {
+    throw new Error(
+      `Index-mask PNG ${filePath} dimensions ${width}x${height} exceed limit ` +
+        `${MASK_LIMITS.dimension} per side / ${MASK_LIMITS.pixels.toLocaleString()} pixels`,
+    );
+  }
+  return { width, height };
+}
+
 export function readMaskIndices(filePath: string): IndexMask {
+  const fileBytes = fs.statSync(filePath).size;
+  if (fileBytes > MASK_LIMITS.compressedBytes) {
+    throw new Error(
+      `Index-mask PNG ${filePath} is ${fileBytes.toLocaleString()} bytes; compressed limit is ` +
+        `${MASK_LIMITS.compressedBytes.toLocaleString()} bytes`,
+    );
+  }
+  const data = fs.readFileSync(filePath);
+  const header = validatePngHeader(data, filePath);
   let png: ReturnType<typeof PNG.sync.read>;
   try {
-    png = PNG.sync.read(fs.readFileSync(filePath));
+    png = PNG.sync.read(data);
   } catch (error) {
     throw new Error(
       `Could not decode index-mask PNG ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (png.colorType !== 0 || png.depth !== 8) {
-    throw new Error(
-      `Index-mask PNG ${filePath} must be 8-bit grayscale (PNG color type 0); ` +
-        `received color type ${png.colorType}, bit depth ${png.depth}`,
-    );
+  if (
+    png.colorType !== 0 ||
+    png.depth !== 8 ||
+    png.width !== header.width ||
+    png.height !== header.height
+  ) {
+    throw new Error(`Decoded index-mask metadata changed unexpectedly for ${filePath}`);
   }
   const indices = new Uint8Array(png.width * png.height);
   for (let i = 0; i < indices.length; i++) indices[i] = png.data[i * 4];
