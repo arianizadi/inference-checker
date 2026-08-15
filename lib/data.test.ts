@@ -181,6 +181,8 @@ describe("artifact loading", () => {
     );
 
     const loaded = getAllScenes(root)[0];
+    expect(loaded.inputImage).toBe("input.png");
+    expect(loaded.models).toHaveLength(1);
     expect(loaded.provenance).toMatchObject({
       source: "railsem19",
       split: "val",

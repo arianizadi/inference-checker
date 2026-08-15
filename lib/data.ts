@@ -411,8 +411,13 @@ export function getAllScenes(root = INFERENCE_DIR): SceneData[] {
     }
 
     const manifest = readSceneManifest(sceneDir);
+    const inputFilename = inputFiles[0].name;
     const modelFiles = files.filter(
-      (file) => file.isFile() && file.name.endsWith(".png") && file.name !== "gt.png",
+      (file) =>
+        file.isFile() &&
+        file.name.endsWith(".png") &&
+        file.name !== "gt.png" &&
+        file.name !== inputFilename,
     );
     const models = modelFiles.map((file): ModelInfo => {
       const metadata = manifest?.models?.[file.name];
@@ -447,7 +452,7 @@ export function getAllScenes(root = INFERENCE_DIR): SceneData[] {
     scenes.push({
       id: entry.name,
       title: manifest?.title,
-      inputImage: inputFiles[0].name,
+      inputImage: inputFilename,
       groundTruth: groundTruth.name,
       models,
       provenance: manifest?.provenance,

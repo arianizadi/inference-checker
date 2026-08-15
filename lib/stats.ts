@@ -40,12 +40,18 @@ export interface IndexMask {
 }
 
 export function readMaskIndices(filePath: string): IndexMask {
-  let png: PNG;
+  let png: ReturnType<typeof PNG.sync.read>;
   try {
     png = PNG.sync.read(fs.readFileSync(filePath));
   } catch (error) {
     throw new Error(
       `Could not decode index-mask PNG ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (png.colorType !== 0 || png.depth !== 8) {
+    throw new Error(
+      `Index-mask PNG ${filePath} must be 8-bit grayscale (PNG color type 0); ` +
+        `received color type ${png.colorType}, bit depth ${png.depth}`,
     );
   }
   const indices = new Uint8Array(png.width * png.height);

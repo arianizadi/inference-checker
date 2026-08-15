@@ -1,6 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { PNG } from "pngjs";
 import type { SegmentationConfig } from "./data";
-import { computeStatsFromMasks, type IndexMask } from "./stats";
+import { computeStatsFromMasks, readMaskIndices, type IndexMask } from "./stats";
+
+const temporaryFiles: string[] = [];
+
+afterEach(() => {
+  for (const file of temporaryFiles.splice(0)) fs.rmSync(file, { force: true });
+});
 
 const config: SegmentationConfig = {
   version: 1,
@@ -100,5 +110,20 @@ describe("computeStatsFromMasks", () => {
     expect(stats.evaluatedPixels).toBe(2);
     expect(stats.ignoredPixels).toBe(2);
     expect(stats.mIoU).toBe(100);
+  });
+});
+
+describe("readMaskIndices", () => {
+  test("rejects an RGB PNG even when all three channels contain the same value", () => {
+    const png = new PNG({ width: 1, height: 1 });
+    png.data.set([7, 7, 7, 255]);
+    const file = path.join(os.tmpdir(), `inference-checker-rgb-mask-${process.pid}.png`);
+    temporaryFiles.push(file);
+    fs.writeFileSync(
+      file,
+      PNG.sync.write(png, { colorType: 2, inputColorType: 6, bitDepth: 8 }),
+    );
+
+    expect(() => readMaskIndices(file)).toThrow("must be 8-bit grayscale");
   });
 });
