@@ -27,6 +27,34 @@ export default function MaskCanvas({
   const maskDataRef = useRef<Uint8Array | null>(null);
   const dimensionsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
+  const colorize = useCallback(
+    (ctx: CanvasRenderingContext2D, indices: Uint8Array, width: number, height: number) => {
+      const imageData = ctx.createImageData(width, height);
+      const data = imageData.data;
+
+      for (let i = 0; i < indices.length; i++) {
+        const classIdx = indices[i];
+        const px = i * 4;
+
+        if (classIdx === 255 || classIdx >= labels.length || hiddenClasses.has(classIdx)) {
+          data[px] = 0;
+          data[px + 1] = 0;
+          data[px + 2] = 0;
+          data[px + 3] = 0;
+        } else {
+          const color = labels[classIdx].color;
+          data[px] = color[0];
+          data[px + 1] = color[1];
+          data[px + 2] = color[2];
+          data[px + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+    },
+    [labels, hiddenClasses]
+  );
+
   // Load and draw the base input image
   useEffect(() => {
     const canvas = baseCanvasRef.current;
@@ -90,34 +118,6 @@ export default function MaskCanvas({
     colorize(ctx, maskDataRef.current, canvas.width, canvas.height);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hiddenClasses, labels]);
-
-  const colorize = useCallback(
-    (ctx: CanvasRenderingContext2D, indices: Uint8Array, width: number, height: number) => {
-      const imageData = ctx.createImageData(width, height);
-      const data = imageData.data;
-
-      for (let i = 0; i < indices.length; i++) {
-        const classIdx = indices[i];
-        const px = i * 4;
-
-        if (classIdx === 255 || classIdx >= labels.length || hiddenClasses.has(classIdx)) {
-          data[px] = 0;
-          data[px + 1] = 0;
-          data[px + 2] = 0;
-          data[px + 3] = 0;
-        } else {
-          const color = labels[classIdx].color;
-          data[px] = color[0];
-          data[px + 1] = color[1];
-          data[px + 2] = color[2];
-          data[px + 3] = 255;
-        }
-      }
-
-      ctx.putImageData(imageData, 0, 0);
-    },
-    [labels, hiddenClasses]
-  );
 
   // Handle mouse move for hover tooltip
   const handleMouseMove = useCallback(
